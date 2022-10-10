@@ -64,13 +64,11 @@ def calc_flux(current_BH_mass, initial_BH_mass, mdot_BH, d_L):
     X = 1
     M_edd = 2.6e-7 * current_BH_mass/10 * ((1+X)/1.7)**-1 * (0.1/eta)  ## in M_sun/yr                                                                       
     acc_rate = mdot_BH/(1-eta)  ## accretion rate in Msun/year
-    #where_over_limit = acc_rate > M_edd
-    #acc_rate = np.where(where_over_limit, M_edd, acc_rate)
     
 
     try: index = np.where(acc_rate > M_edd)[0]
     except: index = False
-        
+    ## if super-Eddington accretion occurs (due to bug in COSMIC), replace emission timestep with previous timestep
     if index is not False: acc_rate.values[index] = acc_rate.values[index+1]
 
     luminosity = bolometric_correction * eta * acc_rate * c**2 * Msun/secyr   ## accretion luminosity in erg/sec  
