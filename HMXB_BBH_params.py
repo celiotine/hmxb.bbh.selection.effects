@@ -85,11 +85,12 @@ def calc_flux(current_BH_mass, initial_BH_mass, mdot_BH, d_L):
 columns=['bin_num', 'metallicity', 'merger_type', 'bin_state', 'delay_time', 'z_f', 'tL_bin_form', 'tL_bin_end', 'z_m', 'p_det', 'tL_XRB_start', 'tL_XRB_end', 'tL_XRB_emitobs', 'ZAMS_mass_k1','ZAMS_mass_k2', 'final_mass_k1', 'final_mass_k2', 'final_k1', 'final_k2', 'BH_mass_i', 'donor_mass_i', 'donor_type', 'XRB_sep_i', 'XRB_porb_i', 'XRB_ecc_i', 'avg_lum', 'max_lum', 'max_flux', 'max_mdot_BH', 'max_mdot_acc', 'mdot_edd', 'emit11', 'emit13', 'emit15', 'emit_tot', 'this_BBH_H', 'this_BBH_z0', 'this_BBHm_H', 'this_BBHm_z0', 'this_HMXB_H', 'this_HMXB_z0']
 df_all = pd.DataFrame(columns=columns)
 
-sample_initC = pd.read_hdf(sys.argv[1])
-run_ID = int(sys.argv[2])
+sample_initC = pd.read_hdf(sys.argv[1])  ## initC file for binary population sampled from COSMIC
+run_ID = int(sys.argv[2])                ## SLURM job array ID, used to slice initC file
+this_sample_section = sample_initC.truncate(before=run_ID*599, after=run_ID*599+599)  
 
-this_sample_section = sample_initC.truncate(before=run_ID*599, after=run_ID*599+599)
 
+## set COSMIC re-evolution timestep to be small during the XRB phase
 dtp = 0.001
 timestep_conditions = [['kstar_1<10', 'kstar_2=14', 'mass_1 > 5', 'dtp=0.001'], ['kstar_1=14', 'kstar_2<10', 'mass_2 > 5', 'dtp=0.001']]
 
@@ -97,7 +98,7 @@ timestep_conditions = [['kstar_1<10', 'kstar_2=14', 'mass_1 > 5', 'dtp=0.001'], 
 
 for index, binary in this_sample_section.iterrows():
     
-    bin_num = binary['bin_num']
+    bin_num = binary['bin_num']    
     met = binary['metallicity']
 
     #-------------------------------------------------------------------------
@@ -119,20 +120,20 @@ for index, binary in this_sample_section.iterrows():
     ## re-evolve this single binary with fine timestep resolution
     bpp, bcm, initC, kick_info = Evolve.evolve(initialbinarytable = binary.drop(['z_ZAMS','Z','tlb_ZAMS']).to_frame().T, timestep_conditions=timestep_conditions)
 
-    merger_type = int(bcm['merger_type'].iloc[-1])
-    bin_state = bcm['bin_state'].iloc[-1]
+    merger_type = int(bcm['merger_type'].iloc[-1])   ## get final merger state of the binary
+    bin_state = bcm['bin_state'].iloc[-1]            ## get final bin state of the binary
 
-    z_f = binary['z_ZAMS']
-    d_L = (1+z_f)*cosmo.comoving_distance(z_f).to(u.cm).value    ## luminosity distance, in cm for flux calculation
-    lookback_time_form = cosmo.lookback_time(z_f).to(u.Myr).value
+    z_f = binary['z_ZAMS']                                           ## redshift of binary ZAMS formation
+    d_L = (1+z_f)*cosmo.comoving_distance(z_f).to(u.cm).value        ## luminosity distance of binary ZAMS formation, in cm for flux calculation
+    lookback_time_form = cosmo.lookback_time(z_f).to(u.Myr).value    ## lookback time of binary ZAMS formation
 
     ## find when the binary lifetime ends (merged or disrupted)
     try: t_bin_end_index = np.where(bpp['sep'] <= 0)[0][0]
     except: t_bin_end_index = -1
 
     t_bin_end = bpp['tphys'].iloc[t_bin_end_index]
-    tL_bin_end = lookback_time_form - t_bin_end
-    if (tL_bin_end < 0): tL_bin_end = 0
+    tL_bin_end = lookback_time_form - t_bin_end          ## lookback time of binary end
+    if (tL_bin_end < 0): tL_bin_end = 0                  ## if binary has not ended by today, set end to be the tL=0
 
     ## "cosmological weight" of the system using comoving volume element
     dVdz = cosmo.differential_comoving_volume(z_f).value   ## in Mpc^3 sr^-1
@@ -152,10 +153,11 @@ for index, binary in this_sample_section.iterrows():
     ## check if binary forms a bound BBH by z=0
     try: bbh_form_index = np.where((bpp['kstar_1']==14) & (bpp['kstar_2']==14) & (bpp['sep']>0))[0][0]
     except: bbh_form_index = None
-        
+    
+    ## if binary DOES form a bound BBH, check if it has formed by today (z=0)
     if (bbh_form_index is not None):
         bbh_form_time = bpp['tphys'].iloc[bbh_form_index]
-        lookback_time_bbh_form = lookback_time_form - bbh_form_time
+        lookback_time_bbh_form = lookback_time_form - bbh_form_time       ## lookback time of BBH formation
             
         if (lookback_time_bbh_form > 0):
             this_BBH_z0 = True
@@ -163,33 +165,32 @@ for index, binary in this_sample_section.iterrows():
     #----------------------------------------------------------------------------------
 
     ## CASE 1: system merges                                                                  
-    ## assign lookback time w/ randomly sampled redshift from weighted distribution                
-    ## alive/disrupted systems have merge_index = -1                                             
+    ## alive or disrupted system have merge_index = -1 in COSMIC (do not want these)                                            
     if (merger_type != -1):
 
         ## check if BBH merger in COSMIC
         if (merger_type == 1414): 
             this_BBH_H = True; this_BBHm_H = True
 
-        try: merge_index = np.where(bpp['evol_type']==6)[0][0]
+        try: merge_index = np.where(bpp['evol_type']==6)[0][0]      ## find index of BBH merger
         except: merge_index = -2   ## common envelope merger
         ## COSMIC does not set evol_type = 6 for CE mergers
         ## system always merges at second-to-last timestep in evolution
             
-        final_mass_k1 = bpp['mass_1'].iloc[merge_index-1]
-        final_mass_k2 = bpp['mass_2'].iloc[merge_index-1]
+        final_mass_k1 = bpp['mass_1'].iloc[merge_index-1]        ## final mass of object 1
+        final_mass_k2 = bpp['mass_2'].iloc[merge_index-1]        ## final mass of object 2
 
-        if (merge_index > 0):
+        if (merge_index > 0):     ## read, "if binary is not a commone envelope merger"
 
-            delay_time = bpp['tphys'].iloc[merge_index]
-            lookback_time_merge = lookback_time_form - delay_time
+            delay_time = bpp['tphys'].iloc[merge_index]                ## delay time of merger
+            lookback_time_merge = lookback_time_form - delay_time      ## lookback time of merger
 
-            if (lookback_time_merge > 0):
+            if (lookback_time_merge > 0):     ## if binary has merged by today...
 
-                z_merge = z_at_value(cosmo.lookback_time, lookback_time_merge*u.Myr)
-                p_det = calc_detection_prob(final_mass_k1, final_mass_k2, z_merge) ## detection probability for this merger
+                z_merge = z_at_value(cosmo.lookback_time, lookback_time_merge*u.Myr)       ## merger redshift
+                p_det = calc_detection_prob(final_mass_k1, final_mass_k2, z_merge)         ## detection probability for this merger
                     
-                if (this_BBHm_H):
+                if (this_BBHm_H):  ## if binary has merged by today AND is a BBH merger...
                     this_BBH_z0 = True; this_BBHm_z0 = True
 
                 dVdz_zm = cosmo.differential_comoving_volume(z_merge).value   ## in Mpc^3 sr^-1                                          
@@ -233,7 +234,7 @@ for index, binary in this_sample_section.iterrows():
 
         XRB_sep_i = bcm['sep'].iloc[XRB_index]
 
-        ## ensure system is not disrupted
+        ## ensure system is not disrupted (has sep=-1 in COSMIC)
         if (XRB_sep_i > 0):
                 
             this_HMXB_H = True
@@ -243,17 +244,17 @@ for index, binary in this_sample_section.iterrows():
             t_begin_XRB = bpp['tphys'].iloc[XRB_index_bpp]
             lookback_time_XRB = lookback_time_form - t_begin_XRB   
 
-            if (lookback_time_XRB > 0):
+            if (lookback_time_XRB > 0):   ## if HMXB has formed by today...
                 this_HMXB_z0 = True
-                z_HMXB = z_at_value(cosmo.lookback_time,  lookback_time_XRB * u.Myr)
-                d_L_HMXB = (1+z_HMXB)*cosmo.comoving_distance(z_HMXB).to(u.cm).value
+                z_HMXB = z_at_value(cosmo.lookback_time,  lookback_time_XRB * u.Myr)   ## redshift of HMXB formation
+                d_L_HMXB = (1+z_HMXB)*cosmo.comoving_distance(z_HMXB).to(u.cm).value   ## luminosity distance of HMXB formation
         
 
             ## find end of HMXB phase using bcm array (only evolves during HMXB lifetime)
-            t_end_XRB = bcm['tphys'].iloc[-2]
+            t_end_XRB = bcm['tphys'].iloc[-2]       
             lookback_time_end_XRB = lookback_time_form - t_end_XRB
 
-            ## get binary params at beginning of XRB phase                             
+            ## get binary parameters at beginning of XRB phase                             
             donor_mass_i = bcm[donorMass].iloc[XRB_index]
             donor_type = bcm[donorObj].iloc[XRB_index]
             BH_mass_i = bcm[BHmass].iloc[XRB_index]
@@ -261,31 +262,32 @@ for index, binary in this_sample_section.iterrows():
             XRB_porb_i = bcm['porb'].iloc[XRB_index]
             XRB_ecc_i = bcm['ecc'].iloc[XRB_index]
 
-            if (this_HMXB_z0):
+            if (this_HMXB_z0):       ## if HMXB has formed by today, calculate emission parameters
                 
                 acc_rate, edd_rate, luminosity, flux = calc_flux(bcm[BHmass], np.ones(len(bcm[BHmass]))*BH_mass_i, bcm[BHmdot], d_L_HMXB)
 
                 #------------------------------------------------------------------------------------------
                 ## CE occurs in one timestep in COSMIC, which generates inaccurate HMXB emission
                 ## must remove emission from this timestep if CE occurs
-
                 ## find if/when CE begins during XRB phase                    
                 try: CE = np.where((bpp['evol_type'] == 7) & (bpp['tphys'] >= t_begin_XRB))[0][0]
                 except: CE = None
 
-                if (CE is not None):
+                if (CE is not None):     ## if a comomon envelope occurs...
                     
-                    CE_begin_end = np.where((bpp['evol_type'] == 7) & (bpp['tphys'] >= t_begin_XRB))[0]
+                    CE_begin_end = np.where((bpp['evol_type'] == 7) & (bpp['tphys'] >= t_begin_XRB))[0]   ## (start, end) index values of CE phase(s)
                     t_CE = bpp['tphys'].iloc[CE_begin_end].values
 
                     ## loop through all CE phases
                     for i in range(len(t_CE)):
                         index = np.abs(bcm['tphys'] - t_CE[i]).values.argmin()
-                        flux.values[index] = flux.values[index-1]
+                        flux.values[index] = flux.values[index-1]   ## set timestep of CE emission to previous timestep's emission
                 #------------------------------------------------------------------------------------------
         
                 ## replace NaN and inf flux values with zeros
                 flux = np.nan_to_num(flux, nan=0, posinf=0, neginf=0)                
+
+                ## final emission parameters
                 max_flux = max(flux)
                 max_lum = max(luminosity)
                 avg_lum = np.sum(luminosity[2:]*dtp)/np.abs(t_end_XRB - t_begin_XRB)
@@ -315,7 +317,7 @@ for index, binary in this_sample_section.iterrows():
                         emit15 = -1; emit13 = -1; emit11 = -1; lookback_time_XRB_emitobs = -1
 
         #----------------------------------------------------------------------------------
-
+    ## save all parameters to data frame
     df = pd.DataFrame([[bin_num, met, merger_type, bin_state, delay_time, z_f, lookback_time_form, tL_bin_end, z_merge, p_det, lookback_time_XRB, lookback_time_end_XRB, lookback_time_XRB_emitobs, ZAMS_mass_k1, ZAMS_mass_k2, final_mass_k1, final_mass_k2, final_k1, final_k2, BH_mass_i, donor_mass_i, donor_type, XRB_sep_i, XRB_porb_i, XRB_ecc_i, avg_lum, max_lum, max_flux, max_mdot_BH, max_mdot_acc, mdot_edd, emit11, emit13, emit15, emit_tot, this_BBH_H, this_BBH_z0, this_BBHm_H, this_BBHm_z0, this_HMXB_H, this_HMXB_z0]], columns=columns)
 
     df_all = df_all.append(df, sort=False, ignore_index=True)
