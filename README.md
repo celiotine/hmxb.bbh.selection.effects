@@ -1,4 +1,4 @@
-# hmxb_bbh_selection_effects
+# hmxb.bbh.selection.effects
 
 code files for "The Missing Link Between Black Holes in High-Mass X-ray Binaries and Gravitational-Wave Sources:
 Observational Selection Effects" (arXiv:2210.01825v1)
