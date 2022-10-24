@@ -175,7 +175,7 @@ pBBHm_H_local = np.sum(bbhm_h_weights_local)/np.sum(local_norms)
 pBBHm_z0 = np.sum(bbhm_z0_weights)/np.sum(universe_norms)
 pBBHm_z0_local = np.sum(bbhm_z0_weights_local)/np.sum(local_norms)
 
-pBBHm_obs = np.sum(bbhm_obs_weights)/np.sum(local_norms)
+pBBHm_obs = np.sum(bbhm_obs_weights)/np.sum(universe_norms)
 pBBHm_obs_local = np.sum(bbhm_obs_weights_local)/np.sum(local_norms)
 
 pHMXB_H = np.sum(hmxb_h_weights)/np.sum(universe_norms)
